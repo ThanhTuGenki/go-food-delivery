@@ -9,8 +9,11 @@ const EntityName = "Restaurant"
 
 type Restaurant struct {
 	common.SQLModel `json:",inline"`
-	Name            string `json:"name" gorm:"column:name;"`
-	Addr            string `json:"address" gorm:"column:addr;"`
+	Name            string         `json:"name" gorm:"column:name;"`
+	Addr            string         `json:"address" gorm:"column:addr;"`
+	Logo            *common.Image  `json:"logo" gorm:"column:logo;"`
+	Cover           *common.Images `json:"cover" gorm:"column:cover;"`
+	LikedCount      int            `json:"liked_count" gorm:"-"`
 }
 
 func (Restaurant) TableName() string {
@@ -29,11 +32,11 @@ func (RestaurantUpdate) TableName() string {
 }
 
 type RestaurantCreate struct {
-	Id    int            `json:"id" gorm:"column:id;"`
-	Name  string         `json:"name" gorm:"column:name;"`
-	Addr  string         `json:"address" gorm:"column:addr;"`
-	Logo  *common.Image  `json:"logo" gorm:"column:logo;"`
-	Cover *common.Images `json:"cover" gorm:"column:cover;"`
+	common.SQLModel `json:",inline"`
+	Name            string         `json:"name" gorm:"column:name;"`
+	Addr            string         `json:"address" gorm:"column:addr;"`
+	Logo            *common.Image  `json:"logo" gorm:"column:logo;"`
+	Cover           *common.Images `json:"cover" gorm:"column:cover;"`
 }
 
 func (RestaurantCreate) TableName() string {
@@ -53,3 +56,7 @@ func (res *RestaurantCreate) Validate() error {
 var (
 	ErrNameCannotBeEmpty = common.NewCustomError(nil, "restaurant name can't be blank", "ErrNameCannotBeEmpty")
 )
+
+func (data *Restaurant) Mask(isAdminOrOwner bool) {
+	data.GenUID(common.DbTypeRestaurant)
+}

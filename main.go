@@ -2,6 +2,7 @@ package main
 
 import (
 	"demo/component"
+	"demo/component/uploadprovider"
 	"demo/middleware"
 	"demo/modules/restaurant/restauranttransport/ginrestaurant"
 	"demo/modules/upload/uploadtransport/ginupload"
@@ -35,8 +36,9 @@ func main() {
 	}
 }
 
-func runService(db *gorm.DB) error {
-	appCtx := component.NewAppContext(db)
+func runService(db *gorm.DB, upProvider uploadprovider.UploadProvider) error {
+
+	appCtx := component.NewAppContext(db, upProvider)
 	r := gin.Default()
 
 	r.Use(middleware.Recover(appCtx))
@@ -48,6 +50,8 @@ func runService(db *gorm.DB) error {
 	})
 
 	// CRUD
+
+	r.POST("/upload", ginupload.Upload(appCtx))
 
 	restaurants := r.Group("/restaurants")
 	{
