@@ -3,25 +3,35 @@ package rstlikebiz
 import (
 	"context"
 	"demo/common"
-	"demo/component/asyncjob"
 	restaurantlikemodel "demo/modules/restaurantlike/model"
+	"demo/pubsub"
 )
 
 type UserUnlikeRestaurantStore interface {
 	Delete(ctx context.Context, userId, restaurantId int) error
 }
 
-type DecreaseLikeCountStore interface {
-	DecreaseLikeCount(ctx context.Context, id int) error
-}
+//
+//type DecreaseLikeCountStore interface {
+//	DecreaseLikeCount(ctx context.Context, id int) error
+//}
 
 type userUnlikeRestaurantBiz struct {
-	store    UserUnlikeRestaurantStore
-	decStore DecreaseLikeCountStore
+	store UserUnlikeRestaurantStore
+	//decStore DecreaseLikeCountStore
+	pubsub pubsub.Pubsub
 }
 
-func NewUserUnlikeRestaurantBiz(store UserUnlikeRestaurantStore, decStore DecreaseLikeCountStore) *userUnlikeRestaurantBiz {
-	return &userUnlikeRestaurantBiz{store: store, decStore: decStore}
+func NewUserUnlikeRestaurantBiz(
+	store UserUnlikeRestaurantStore,
+	//decStore DecreaseLikeCountStore,
+	pubsub pubsub.Pubsub,
+) *userUnlikeRestaurantBiz {
+	return &userUnlikeRestaurantBiz{
+		store: store,
+		//decStore: decStore,
+		pubsub: pubsub,
+	}
 }
 
 func (biz *userUnlikeRestaurantBiz) UnlikeRestaurant(
@@ -35,17 +45,10 @@ func (biz *userUnlikeRestaurantBiz) UnlikeRestaurant(
 		return restaurantlikemodel.ErrCannotUnlikeRestaurant(err)
 	}
 
-	// side effect
-	go func() {
-		defer common.AppRecover()
-		job := asyncjob.NewJob(func(ctx context.Context) error {
-			return biz.decStore.DecreaseLikeCount(ctx, restaurantId)
-		})
-
-		//job.SetRetryDurations([]time.Duration{time.Second * 3})
-
-		_ = asyncjob.NewGroup(true, job).Run(ctx)
-	}()
+	biz.pubsub.Publish(ctx, common.TopicUserDislikeRestaurant, pubsub.NewMessage(&restaurantlikemodel.Like{
+		RestaurantId: restaurantId,
+		UserId:       userId,
+	}))
 
 	return nil
 }

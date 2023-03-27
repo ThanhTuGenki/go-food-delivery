@@ -2,25 +2,35 @@ package rstlikebiz
 
 import (
 	"context"
-	"demo/component/asyncjob"
+	"demo/common"
 	restaurantlikemodel "demo/modules/restaurantlike/model"
+	"demo/pubsub"
 )
 
 type UserLikeRestaurantStore interface {
 	Create(ctx context.Context, data *restaurantlikemodel.Like) error
 }
 
-type IncreaseLikeCountStore interface {
-	IncreaseLikeCount(ctx context.Context, id int) error
-}
+//type IncreaseLikeCountStore interface {
+//	IncreaseLikeCount(ctx context.Context, id int) error
+//}
 
 type userLikeRestaurantBiz struct {
-	store    UserLikeRestaurantStore
-	incStore IncreaseLikeCountStore
+	store UserLikeRestaurantStore
+	//incStore IncreaseLikeCountStore
+	pubsub pubsub.Pubsub
 }
 
-func NewUserLikeRestaurantBiz(store UserLikeRestaurantStore, incStore IncreaseLikeCountStore) *userLikeRestaurantBiz {
-	return &userLikeRestaurantBiz{store: store, incStore: incStore}
+func NewUserLikeRestaurantBiz(
+	store UserLikeRestaurantStore,
+	//incStore IncreaseLikeCountStore,
+	pubsub pubsub.Pubsub,
+) *userLikeRestaurantBiz {
+	return &userLikeRestaurantBiz{
+		store: store,
+		//incStore: incStore,
+		pubsub: pubsub,
+	}
 }
 
 func (biz *userLikeRestaurantBiz) LikeRestaurant(
@@ -34,11 +44,15 @@ func (biz *userLikeRestaurantBiz) LikeRestaurant(
 	}
 
 	// side effect
-	job := asyncjob.NewJob(func(ctx context.Context) error {
-		return biz.incStore.IncreaseLikeCount(ctx, data.RestaurantId)
-	})
+	// New solution: Use pub/sub
 
-	_ = asyncjob.NewGroup(true, job).Run(ctx)
+	biz.pubsub.Publish(ctx, common.TopicUserLikeRestaurant, pubsub.NewMessage(data))
+
+	//job := asyncjob.NewJob(func(ctx context.Context) error {
+	//	return biz.incStore.IncreaseLikeCount(ctx, data.RestaurantId)
+	//})
+	//
+	//_ = asyncjob.NewGroup(true, job).Run(ctx)
 
 	return nil
 }

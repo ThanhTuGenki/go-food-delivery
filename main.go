@@ -9,6 +9,8 @@ import (
 	"demo/modules/restaurantlike/transport/ginresturantlike"
 	"demo/modules/upload/uploadtransport/ginupload"
 	"demo/modules/user/usertransport/ginuser"
+	"demo/pubsub/pblocal"
+	"demo/subscriber"
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -43,8 +45,13 @@ func main() {
 }
 
 func runService(db *gorm.DB, upProvider uploadprovider.UploadProvider, secretKey string) error {
+	appCtx := component.NewAppContext(db, upProvider, secretKey, pblocal.NewPubSub())
 
-	appCtx := component.NewAppContext(db, upProvider, secretKey)
+	//subscriber.Setup(appCtx)
+	if err := subscriber.NewEngine(appCtx).Start(); err != nil {
+		log.Fatalln(err)
+	}
+
 	r := gin.Default()
 
 	r.Use(middleware.Recover(appCtx))
