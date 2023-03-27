@@ -2,6 +2,7 @@ package main
 
 import (
 	"demo/component"
+	"demo/middleware"
 	"demo/modules/restaurant/restauranttransport/ginrestaurant"
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/mysql"
@@ -9,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 )
 
 func main() {
@@ -26,7 +26,10 @@ func main() {
 }
 
 func runService(db *gorm.DB) error {
+	appCtx := component.NewAppContext(db)
 	r := gin.Default()
+
+	r.Use(middleware.Recover(appCtx))
 
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -36,71 +39,13 @@ func runService(db *gorm.DB) error {
 
 	// CRUD
 
-	appCtx := component.NewAppContext(db)
-
 	restaurants := r.Group("/restaurants")
 	{
 		restaurants.POST("", ginrestaurant.CreateRestaurant(appCtx))
-
 		restaurants.GET("/:id", ginrestaurant.GetRestaurant(appCtx))
-
 		restaurants.GET("", ginrestaurant.ListRestaurant(appCtx))
-
-		restaurants.PATCH("/:id", func(c *gin.Context) {
-			id, err := strconv.Atoi(c.Param("id"))
-
-			if err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			var data RestaurantUpdate
-
-			if err := c.ShouldBind(&data); err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			if err := db.Where("id = ?", id).Updates(&data).Error; err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			c.JSON(http.StatusOK, gin.H{"ok": 1})
-		})
-
-		restaurants.DELETE("/:id", func(c *gin.Context) {
-			id, err := strconv.Atoi(c.Param("id"))
-
-			if err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			if err := db.Table(Restaurant{}.TableName()).
-				Where("id = ?", id).
-				Delete(nil).Error; err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			c.JSON(http.StatusOK, gin.H{"ok": 1})
-		})
+		restaurants.PATCH("/:id", ginrestaurant.UpdateRestaurant(appCtx))
+		restaurants.DELETE("/:id", ginrestaurant.DeleteRestaurant(appCtx))
 	}
 
 	return r.Run()
