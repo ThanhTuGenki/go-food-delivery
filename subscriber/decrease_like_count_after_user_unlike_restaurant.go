@@ -6,6 +6,7 @@ import (
 	"demo/modules/restaurant/restaurantstorage"
 	"demo/pubsub"
 	"demo/skio"
+	"go.opencensus.io/trace"
 )
 
 func RunDecreaseLikeCountAfterUserUnlikeRestaurant(appCtx component.AppContext, rtEngine skio.RealtimeEngine) consumerJob {
@@ -14,7 +15,11 @@ func RunDecreaseLikeCountAfterUserUnlikeRestaurant(appCtx component.AppContext, 
 		Hld: func(ctx context.Context, message *pubsub.Message) error {
 			store := restaurantstorage.NewSQLStore(appCtx.GetMainDBConnection())
 			likeData := message.Data().(HasRestaurantId)
-			return store.DecreaseLikeCount(ctx, likeData.GetRestaurantId())
+
+			ctx1, span := trace.StartSpan(ctx, "pubsub.sub.RunDecreaseLikeCountAfterUserUnlikeRestaurant")
+			defer span.End()
+
+			return store.DecreaseLikeCount(ctx1, likeData.GetRestaurantId())
 		},
 	}
 }

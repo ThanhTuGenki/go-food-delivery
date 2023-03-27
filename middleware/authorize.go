@@ -1,15 +1,21 @@
 package middleware
 
 import (
+	"context"
 	"demo/common"
 	"demo/component"
 	"demo/component/tokenprovider/jwt"
-	"demo/modules/user/userstorage"
+	"demo/modules/user/usermodel"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"go.opencensus.io/trace"
 	"strings"
 )
+
+type AuthenStore interface {
+	FindUser(ctx context.Context, conditions map[string]interface{}, moreInfo ...string) (*usermodel.User, error)
+}
 
 func ErrWrongAuthHeader(err error) *common.AppError {
 	return common.NewCustomError(
@@ -33,7 +39,7 @@ func extractTokenFromHeaderString(s string) (string, error) {
 // 1. Get token from header
 // 2. Validate token and parse to payload
 // 3. From the token payload, we use user_id to find from DB
-func RequiredAuth(appCtx component.AppContext) func(c *gin.Context) {
+func RequiredAuth(appCtx component.AppContext, authStore AuthenStore) func(c *gin.Context) {
 	tokenProvider := jwt.NewTokenJWTProvider(appCtx.SecretKey())
 
 	return func(c *gin.Context) {
@@ -43,15 +49,17 @@ func RequiredAuth(appCtx component.AppContext) func(c *gin.Context) {
 			panic(err)
 		}
 
-		db := appCtx.GetMainDBConnection()
-		store := userstorage.NewSQLStore(db)
+		//db := appCtx.GetMainDBConnection()
+		//store := userstorage.NewSQLStore(db)
 
 		payload, err := tokenProvider.Validate(token)
 		if err != nil {
 			panic(err)
 		}
 
-		user, err := store.FindUser(c.Request.Context(), map[string]interface{}{"id": payload.UserId})
+		ctx, span := trace.StartSpan(c.Request.Context(), "middleware.RequiredAuth")
+		user, err := authStore.FindUser(ctx, map[string]interface{}{"id": payload.UserId})
+		span.End()
 
 		if err != nil {
 			panic(err)

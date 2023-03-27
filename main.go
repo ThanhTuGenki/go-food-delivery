@@ -4,15 +4,20 @@ import (
 	"demo/common"
 	"demo/component"
 	"demo/component/uploadprovider"
+	"demo/memcache"
 	"demo/middleware"
 	"demo/modules/restaurant/restauranttransport/ginrestaurant"
 	"demo/modules/restaurantlike/transport/ginresturantlike"
 	"demo/modules/upload/uploadtransport/ginupload"
+	"demo/modules/user/userstorage"
 	"demo/modules/user/usertransport/ginuser"
 	"demo/pubsub/pblocal"
 	"demo/skio"
 	"demo/subscriber"
 	"github.com/gin-gonic/gin"
+	jg "go.opencensus.io/exporter/jaeger"
+	"go.opencensus.io/plugin/ochttp"
+	"go.opencensus.io/trace"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"log"
@@ -48,6 +53,9 @@ func main() {
 func runService(db *gorm.DB, upProvider uploadprovider.UploadProvider, secretKey string) error {
 	appCtx := component.NewAppContext(db, upProvider, secretKey, pblocal.NewPubSub())
 
+	userStore := userstorage.NewSQLStore(appCtx.GetMainDBConnection())
+	userCachingStore := memcache.NewUserCaching(memcache.NewCaching(), userStore)
+
 	r := gin.Default()
 
 	//subscriber.Setup(appCtx)
@@ -78,9 +86,9 @@ func runService(db *gorm.DB, upProvider uploadprovider.UploadProvider, secretKey
 
 	v1.POST("/register", ginuser.Register(appCtx))
 	v1.POST("/login", ginuser.Login(appCtx))
-	v1.GET("/profile", middleware.RequiredAuth(appCtx), ginuser.GetProfile(appCtx))
+	v1.GET("/profile", middleware.RequiredAuth(appCtx, userCachingStore), ginuser.GetProfile(appCtx))
 
-	restaurants := v1.Group("/restaurants", middleware.RequiredAuth(appCtx))
+	restaurants := v1.Group("/restaurants", middleware.RequiredAuth(appCtx, userCachingStore))
 	{
 		restaurants.POST("", ginrestaurant.CreateRestaurant(appCtx))
 		restaurants.GET("/:id", ginrestaurant.GetRestaurant(appCtx))
@@ -107,7 +115,26 @@ func runService(db *gorm.DB, upProvider uploadprovider.UploadProvider, secretKey
 		})
 	})
 
-	return r.Run()
+	je, err := jg.NewExporter(jg.Options{
+		AgentEndpoint: "localhost:6831",
+		Process:       jg.Process{ServiceName: "G04-Food-Delivery"},
+	})
+
+	if err != nil {
+		log.Println(err)
+	}
+
+	trace.RegisterExporter(je)
+	trace.ApplyConfig(trace.Config{DefaultSampler: trace.ProbabilitySampler(1)})
+
+	return http.ListenAndServe(
+		":8080",
+		&ochttp.Handler{
+			Handler: r,
+		},
+	)
+
+	//return r.Run()
 }
 
 //func startSocketIOServer(engine *gin.Engine, appCtx component.AppContext) {

@@ -5,6 +5,7 @@ import (
 	"demo/common"
 	restaurantlikemodel "demo/modules/restaurantlike/model"
 	"demo/pubsub"
+	"go.opencensus.io/trace"
 )
 
 type UserLikeRestaurantStore interface {
@@ -37,6 +38,14 @@ func (biz *userLikeRestaurantBiz) LikeRestaurant(
 	ctx context.Context,
 	data *restaurantlikemodel.Like,
 ) error {
+	_, span := trace.StartSpan(ctx, "restaurant.biz.like")
+	span.AddAttributes(
+		trace.Int64Attribute("restaurant_id", int64(data.RestaurantId)),
+		trace.Int64Attribute("user_id", int64(data.UserId)),
+	)
+
+	defer span.End()
+
 	err := biz.store.Create(ctx, data)
 
 	if err != nil {

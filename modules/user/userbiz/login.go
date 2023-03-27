@@ -6,6 +6,7 @@ import (
 	"demo/component"
 	"demo/component/tokenprovider"
 	"demo/modules/user/usermodel"
+	"go.opencensus.io/trace"
 )
 
 type LoginStorage interface {
@@ -37,15 +38,21 @@ func NewLoginBusiness(storeUser LoginStorage, tokenProvider tokenprovider.Provid
 // 4. Return token(s)
 
 func (business *loginBusiness) Login(ctx context.Context, data *usermodel.UserLogin) (*tokenprovider.Token, error) {
-	user, err := business.storeUser.FindUser(ctx, map[string]interface{}{"email": data.Email})
+	ctx1, span1 := trace.StartSpan(ctx, "user.biz.login")
+
+	user, err := business.storeUser.FindUser(ctx1, map[string]interface{}{"email": data.Email})
+
+	span1.End()
 
 	if err != nil {
 		return nil, usermodel.ErrUsernameOrPasswordInvalid
 	}
 
+	_, span2 := trace.StartSpan(ctx, "user.biz.login.gen-jwt")
 	passHashed := business.hasher.Hash(data.Password + user.Salt)
 
 	if user.Password != passHashed {
+		span2.End()
 		return nil, usermodel.ErrUsernameOrPasswordInvalid
 	}
 
@@ -55,16 +62,11 @@ func (business *loginBusiness) Login(ctx context.Context, data *usermodel.UserLo
 	}
 
 	accessToken, err := business.tokenProvider.Generate(payload, business.expiry)
+	span2.End()
+
 	if err != nil {
 		return nil, common.ErrInternal(err)
 	}
-
-	//refreshToken, err := business.tokenProvider.Generate(payload, business.tkCfg.GetRtExp())
-	//if err != nil {
-	//	return nil, common.ErrInternal(err)
-	//}
-
-	//account := usermodel.NewAccount(accessToken, refreshToken)
 
 	return accessToken, nil
 }
