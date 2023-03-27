@@ -1,32 +1,67 @@
 package main
 
 import (
+	"demo/common"
 	"demo/component"
+	"demo/component/uploadprovider"
+	"demo/middleware"
 	"demo/modules/restaurant/restauranttransport/ginrestaurant"
+	"demo/modules/restaurantlike/transport/ginresturantlike"
+	"demo/modules/upload/uploadtransport/ginupload"
+	"demo/modules/user/usertransport/ginuser"
+	"demo/pubsub/pblocal"
+	"demo/skio"
+	"demo/subscriber"
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"log"
 	"net/http"
 	"os"
-	"strconv"
 )
 
 func main() {
 	dsn := os.Getenv("DBConnectionStr")
+
+	s3BucketName := os.Getenv("S3BucketName")
+	s3Region := os.Getenv("S3Region")
+	s3APIKey := os.Getenv("S3APIKey")
+	s3SecretKey := os.Getenv("S3SecretKey")
+	s3Domain := os.Getenv("S3Domain")
+	secretKey := os.Getenv("SYSTEM_SECRET")
+
+	s3Provider := uploadprovider.NewS3Provider(s3BucketName, s3Region, s3APIKey, s3SecretKey, s3Domain)
+
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	if err := runService(db); err != nil {
+	db = db.Debug()
+
+	if err := runService(db, s3Provider, secretKey); err != nil {
 		log.Fatalln(err)
 	}
 }
 
-func runService(db *gorm.DB) error {
+func runService(db *gorm.DB, upProvider uploadprovider.UploadProvider, secretKey string) error {
+	appCtx := component.NewAppContext(db, upProvider, secretKey, pblocal.NewPubSub())
+
 	r := gin.Default()
+
+	//subscriber.Setup(appCtx)
+	rtEngine := skio.NewEngine()
+
+	if err := rtEngine.Run(appCtx, r); err != nil {
+		log.Fatalln(err)
+	}
+
+	if err := subscriber.NewEngine(appCtx, rtEngine).Start(); err != nil {
+		log.Fatalln(err)
+	}
+
+	r.Use(middleware.Recover(appCtx))
 
 	r.GET("/ping", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
@@ -35,112 +70,155 @@ func runService(db *gorm.DB) error {
 	})
 
 	// CRUD
+	r.StaticFile("/demo/", "./demo.html")
 
-	appCtx := component.NewAppContext(db)
+	v1 := r.Group("/v1")
 
-	restaurants := r.Group("/restaurants")
+	v1.POST("/upload", ginupload.Upload(appCtx))
+
+	v1.POST("/register", ginuser.Register(appCtx))
+	v1.POST("/login", ginuser.Login(appCtx))
+	v1.GET("/profile", middleware.RequiredAuth(appCtx), ginuser.GetProfile(appCtx))
+
+	restaurants := v1.Group("/restaurants", middleware.RequiredAuth(appCtx))
 	{
 		restaurants.POST("", ginrestaurant.CreateRestaurant(appCtx))
-
 		restaurants.GET("/:id", ginrestaurant.GetRestaurant(appCtx))
-
 		restaurants.GET("", ginrestaurant.ListRestaurant(appCtx))
+		restaurants.PATCH("/:id", ginrestaurant.UpdateRestaurant(appCtx))
+		restaurants.DELETE("/:id", ginrestaurant.DeleteRestaurant(appCtx))
 
-		restaurants.PATCH("/:id", func(c *gin.Context) {
-			id, err := strconv.Atoi(c.Param("id"))
-
-			if err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			var data RestaurantUpdate
-
-			if err := c.ShouldBind(&data); err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			if err := db.Where("id = ?", id).Updates(&data).Error; err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			c.JSON(http.StatusOK, gin.H{"ok": 1})
-		})
-
-		restaurants.DELETE("/:id", func(c *gin.Context) {
-			id, err := strconv.Atoi(c.Param("id"))
-
-			if err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			if err := db.Table(Restaurant{}.TableName()).
-				Where("id = ?", id).
-				Delete(nil).Error; err != nil {
-				c.JSON(401, map[string]interface{}{
-					"error": err.Error(),
-				})
-
-				return
-			}
-
-			c.JSON(http.StatusOK, gin.H{"ok": 1})
-		})
+		restaurants.GET("/:id/liked-users", ginresturantlike.ListUser(appCtx))
+		restaurants.POST("/:id/like", ginresturantlike.UserLikeRestaurant(appCtx))
+		restaurants.DELETE("/:id/unlike", ginresturantlike.UserUnlikeRestaurant(appCtx))
 	}
+
+	v1.GET("/encode-uid", func(c *gin.Context) {
+		type reqData struct {
+			DbType int `form:"type"`
+			RealId int `form:"id"`
+		}
+
+		var d reqData
+		c.ShouldBind(&d)
+
+		c.JSON(http.StatusOK, gin.H{
+			"id": common.NewUID(uint32(d.RealId), d.DbType, 1),
+		})
+	})
 
 	return r.Run()
 }
 
-//CREATE TABLE `restaurants` (
-//	`id` int(11) NOT NULL AUTO_INCREMENT,
-//	`owner_id` int(11) NOT NULL,
-//	`name` varchar(50) NOT NULL,
-//	`addr` varchar(255) NOT NULL,
-//	`city_id` int(11) DEFAULT NULL,
-//	`lat` double DEFAULT NULL,
-//	`lng` double DEFAULT NULL,
-//	`cover` json NOT NULL,
-//	`logo` json NOT NULL,
-//	`shipping_fee_per_km` double DEFAULT '0',
-//	`status` int(11) NOT NULL DEFAULT '1',
-//	`created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-//	`updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-//	PRIMARY KEY (`id`),
-//	KEY `owner_id` (`owner_id`) USING BTREE,
-//	KEY `city_id` (`city_id`) USING BTREE,
-//	KEY `status` (`status`) USING BTREE
-//) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-
-type Restaurant struct {
-	Id   int    `json:"id" gorm:"column:id;"`
-	Name string `json:"name" gorm:"column:name;"`
-	Addr string `json:"address" gorm:"column:addr;"`
-}
-
-func (Restaurant) TableName() string {
-	return "restaurants"
-}
-
-type RestaurantUpdate struct {
-	Name *string `json:"name" gorm:"column:name;"`
-	Addr *string `json:"address" gorm:"column:addr;"`
-}
-
-func (RestaurantUpdate) TableName() string {
-	return Restaurant{}.TableName()
-}
+//func startSocketIOServer(engine *gin.Engine, appCtx component.AppContext) {
+//	server, _ := socketio.NewServer(&engineio.Options{
+//		Transports: []transport.Transport{websocket.Default},
+//	})
+//
+//	server.OnConnect("/", func(s socketio.Conn) error {
+//		//s.SetContext("")
+//		fmt.Println("connected:", s.ID(), " IP:", s.RemoteAddr())
+//
+//		//s.Join("Shipper")
+//		//server.BroadcastToRoom("/", "Shipper", "test", "Hello 200lab")
+//
+//		return nil
+//	})
+//
+//	server.OnError("/", func(s socketio.Conn, e error) {
+//		fmt.Println("meet error:", e)
+//	})
+//
+//	server.OnDisconnect("/", func(s socketio.Conn, reason string) {
+//		fmt.Println("closed", reason)
+//		// Remove socket from socket engine (from app context)
+//	})
+//
+//	server.OnEvent("/", "authenticate", func(s socketio.Conn, token string) {
+//
+//		// Validate token
+//		// If false: s.Close(), and return
+//
+//		// If true
+//		// => UserId
+//		// Fetch db find user by Id
+//		// Here: s belongs to who? (user_id)
+//		// We need a map[user_id][]socketio.Conn
+//
+//		db := appCtx.GetMainDBConnection()
+//		store := userstorage.NewSQLStore(db)
+//		//
+//		tokenProvider := jwt.NewTokenJWTProvider(appCtx.SecretKey())
+//		//
+//		payload, err := tokenProvider.Validate(token)
+//
+//		if err != nil {
+//			s.Emit("authentication_failed", err.Error())
+//			s.Close()
+//			return
+//		}
+//		//
+//		user, err := store.FindUser(context.Background(), map[string]interface{}{"id": payload.UserId})
+//		//
+//		if err != nil {
+//			s.Emit("authentication_failed", err.Error())
+//			s.Close()
+//			return
+//		}
+//
+//		if user.Status == 0 {
+//			s.Emit("authentication_failed", errors.New("you has been banned/deleted"))
+//			s.Close()
+//			return
+//		}
+//
+//		user.Mask(false)
+//
+//		s.Emit("your_profile", user)
+//	})
+//
+//	server.OnEvent("/", "test", func(s socketio.Conn, msg string) {
+//		log.Println(msg)
+//	})
+//
+//	type Person struct {
+//		Name string `json:"name"`
+//		Age  int    `json:"age"`
+//	}
+//
+//	server.OnEvent("/", "notice", func(s socketio.Conn, p Person) {
+//		fmt.Println("server receive notice:", p.Name, p.Age)
+//
+//		p.Age = 33
+//		s.Emit("notice", p)
+//
+//	})
+//
+//	server.OnEvent("/", "test", func(s socketio.Conn, msg string) {
+//		fmt.Println("server receive test:", msg)
+//	})
+//	//
+//	//server.OnEvent("/chat", "msg", func(s socketio.Conn, msg string) string {
+//	//	s.SetContext(msg)
+//	//	return "recv " + msg
+//	//})
+//	//
+//	//server.OnEvent("/", "bye", func(s socketio.Conn) string {
+//	//	last := s.Context().(string)
+//	//	s.Emit("bye", last)
+//	//	s.Close()
+//	//	return last
+//	//})
+//	//
+//	//server.OnEvent("/", "noteSumit", func(s socketio.Conn) string {
+//	//	last := s.Context().(string)
+//	//	s.Emit("bye", last)
+//	//	s.Close()
+//	//	return last
+//	//})
+//
+//	go server.Serve()
+//
+//	engine.GET("/socket.io/*any", gin.WrapH(server))
+//	engine.POST("/socket.io/*any", gin.WrapH(server))
+//}
