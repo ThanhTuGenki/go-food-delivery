@@ -4,6 +4,7 @@ import (
 	"demo/component"
 	"demo/middleware"
 	"demo/modules/restaurant/restauranttransport/ginrestaurant"
+	"demo/modules/upload/uploadtransport/ginupload"
 	"github.com/gin-gonic/gin"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
@@ -14,13 +15,22 @@ import (
 
 func main() {
 	dsn := os.Getenv("DBConnectionStr")
+
+	s3BucketName := os.Getenv("S3BucketName")
+	s3Region := os.Getenv("S3Region")
+	s3APIKey := os.Getenv("S3APIKey")
+	s3SecretKey := os.Getenv("S3SecretKey")
+	s3Domain := os.Getenv("S3Domain")
+
+	s3Provider := uploadprovider.NewS3Provider(s3BucketName, s3Region, s3APIKey, s3SecretKey, s3Domain)
+
 	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
 
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	if err := runService(db); err != nil {
+	if err := runService(db, s3Provider); err != nil {
 		log.Fatalln(err)
 	}
 }
@@ -49,43 +59,4 @@ func runService(db *gorm.DB) error {
 	}
 
 	return r.Run()
-}
-
-//CREATE TABLE `restaurants` (
-//	`id` int(11) NOT NULL AUTO_INCREMENT,
-//	`owner_id` int(11) NOT NULL,
-//	`name` varchar(50) NOT NULL,
-//	`addr` varchar(255) NOT NULL,
-//	`city_id` int(11) DEFAULT NULL,
-//	`lat` double DEFAULT NULL,
-//	`lng` double DEFAULT NULL,
-//	`cover` json NOT NULL,
-//	`logo` json NOT NULL,
-//	`shipping_fee_per_km` double DEFAULT '0',
-//	`status` int(11) NOT NULL DEFAULT '1',
-//	`created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
-//	`updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-//	PRIMARY KEY (`id`),
-//	KEY `owner_id` (`owner_id`) USING BTREE,
-//	KEY `city_id` (`city_id`) USING BTREE,
-//	KEY `status` (`status`) USING BTREE
-//) ENGINE=InnoDB DEFAULT CHARSET=utf8;
-
-type Restaurant struct {
-	Id   int    `json:"id" gorm:"column:id;"`
-	Name string `json:"name" gorm:"column:name;"`
-	Addr string `json:"address" gorm:"column:addr;"`
-}
-
-func (Restaurant) TableName() string {
-	return "restaurants"
-}
-
-type RestaurantUpdate struct {
-	Name *string `json:"name" gorm:"column:name;"`
-	Addr *string `json:"address" gorm:"column:addr;"`
-}
-
-func (RestaurantUpdate) TableName() string {
-	return Restaurant{}.TableName()
 }
